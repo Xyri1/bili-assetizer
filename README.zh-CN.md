@@ -93,30 +93,45 @@ uv sync
 
 ## 配置
 
-将 `.env.example` 复制为 `.env` 并填入您的 API 密钥：
+将 `.env.example` 复制为 `.env` 并填入您的配置：
 
 ```bash
 cp .env.example .env
 ```
 
-典型变量：
+### 环境变量
 
 ```ini
-DATA_DIR=./data
+# === 路径 ===
+DATA_DIR=./data          # 资产和数据库存储位置
+FFMPEG_BIN=ffmpeg        # ffmpeg 可执行文件路径（默认：ffmpeg）
 
-# OpenRouter (推荐用于生成/视觉/嵌入)
-OPENROUTER_API_KEY=...
-OPENROUTER_MODEL_TEXT=...
-OPENROUTER_MODEL_VISION=...
-OPENROUTER_MODEL_EMBED=...
+# === AI API（用于未来的生成功能） ===
+AI_API_KEY=your-api-key-here
+AI_MODEL_TEXT=gpt-4o
+AI_MODEL_VISION=gpt-4o
+AI_MODEL_EMBED=text-embedding-3-small
 
-# 可选：长视频的专用语音转文本提供商
-STT_PROVIDER=...
-STT_API_KEY=...
-
-# 可选
-FFMPEG_BIN=ffmpeg
+# === 腾讯云 ASR（用于 extract-transcript） ===
+TENCENTCLOUD_SECRET_ID=your-secret-id
+TENCENTCLOUD_SECRET_KEY=your-secret-key
+TENCENTCLOUD_REGION=ap-guangzhou
 ```
+
+### 哪些变量是必需的？
+
+| 功能 | 必需变量 |
+|------|----------|
+| 基础流水线（ingest、frames、OCR） | 无（使用默认值） |
+| `extract-transcript` | `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY` |
+| `generate`（计划中） | `AI_API_KEY`、`AI_MODEL_*` |
+
+### 获取腾讯云 ASR 凭证
+
+1. 创建[腾讯云](https://cloud.tencent.com/)账号
+2. 开通 [ASR 语音识别服务](https://console.cloud.tencent.com/asr)
+3. 在[访问管理控制台](https://console.cloud.tencent.com/cam/capi)创建 API 密钥
+4. 将 `SecretId` 和 `SecretKey` 复制到您的 `.env` 文件
 
 > 请勿将密钥提交到 git。`.env` 必须保持被忽略状态。
 
@@ -148,7 +163,7 @@ uv run bili-assetizer ingest "https://www.bilibili.com/video/BV1vCzDBYEEa"
 
 ### `doctor`
 
-验证环境（ffmpeg、环境变量、可写的 data 目录）。
+验证环境（ffmpeg、tesseract、环境变量、可写的 data 目录）。
 
 ```bash
 uv run bili-assetizer doctor
@@ -170,13 +185,220 @@ uv run bili-assetizer ingest "<bilibili_url>" --force
 * `data/assets/<asset_id>/source_api/view.json`
 * `data/assets/<asset_id>/source_api/playurl.json`
 
-### `query` (计划中)
+### `extract-source`
 
-在一个或多个资产上搜索记忆。
+为资产落地源视频。
 
 ```bash
-uv run bili-assetizer query --assets <id1,id2> --q "..."
+# 仅验证溯源信息（状态设为 MISSING）
+uv run bili-assetizer extract-source <asset_id>
+
+# 从 Bilibili 下载
+uv run bili-assetizer extract-source <asset_id> --download
+
+# 从本地文件复制
+uv run bili-assetizer extract-source <asset_id> --local-file /path/to/video.mp4
+
+# 强制覆盖
+uv run bili-assetizer extract-source <asset_id> --download --force
 ```
+
+### `extract-frames`
+
+从视频资产提取关键帧。
+
+```bash
+uv run bili-assetizer extract-frames <asset_id>
+uv run bili-assetizer extract-frames <asset_id> --interval-sec 5.0
+uv run bili-assetizer extract-frames <asset_id> --max-frames 30
+uv run bili-assetizer extract-frames <asset_id> --scene-thresh 0.30
+uv run bili-assetizer extract-frames <asset_id> --force
+```
+
+| 标志 | 说明 |
+|------|------|
+| `--interval-sec` | 均匀采样的间隔秒数（默认：3.0） |
+| `--max-frames` | 最大提取帧数 |
+| `--scene-thresh` | 场景检测阈值 0.0-1.0 |
+| `--force`, `-f` | 覆盖已有帧 |
+
+### `extract-timeline`
+
+从视频帧提取信息密度时间轴。
+
+```bash
+uv run bili-assetizer extract-timeline <asset_id>
+uv run bili-assetizer extract-timeline <asset_id> --bucket-sec 15
+uv run bili-assetizer extract-timeline <asset_id> --force
+```
+
+| 标志 | 说明 |
+|------|------|
+| `--bucket-sec` | 桶大小（秒）（默认：15） |
+| `--force`, `-f` | 覆盖已有时间轴 |
+
+### `extract-select`
+
+从高分时间轴桶中选择代表帧。
+
+```bash
+uv run bili-assetizer extract-select <asset_id>
+uv run bili-assetizer extract-select <asset_id> --top-buckets 10
+uv run bili-assetizer extract-select <asset_id> --max-frames 30
+uv run bili-assetizer extract-select <asset_id> --force
+```
+
+| 标志 | 说明 |
+|------|------|
+| `--top-buckets` | 选取的高分桶数量（默认：10） |
+| `--max-frames` | 最大选择帧数（默认：30） |
+| `--force`, `-f` | 覆盖已有选择 |
+
+### `extract-ocr`
+
+使用 Tesseract 从选定帧提取 OCR 文本。
+
+```bash
+uv run bili-assetizer extract-ocr <asset_id>
+uv run bili-assetizer extract-ocr <asset_id> --lang "eng+chi_sim"
+uv run bili-assetizer extract-ocr <asset_id> --psm 6
+uv run bili-assetizer extract-ocr <asset_id> --tesseract-cmd /path/to/tesseract
+uv run bili-assetizer extract-ocr <asset_id> --force
+```
+
+| 标志 | 说明 |
+|------|------|
+| `--lang`, `-l` | Tesseract 语言代码（默认：`eng+chi_sim`） |
+| `--psm` | 页面分割模式 0-13（默认：6） |
+| `--tesseract-cmd` | tesseract 可执行文件路径 |
+| `--force`, `-f` | 覆盖已有 OCR 结果 |
+
+### `extract-transcript`
+
+从视频资产提取 ASR 字幕。
+
+```bash
+uv run bili-assetizer extract-transcript <asset_id>
+uv run bili-assetizer extract-transcript <asset_id> --provider tencent
+uv run bili-assetizer extract-transcript <asset_id> --format 0
+uv run bili-assetizer extract-transcript <asset_id> --force
+```
+
+| 标志 | 说明 |
+|------|------|
+| `--provider` | ASR 提供商（默认：`tencent`） |
+| `--format` | 输出格式：0=分段，1=无标点词，2=带标点词（默认：0） |
+| `--force`, `-f` | 覆盖已有字幕 |
+
+### `ocr-normalize`
+
+将选定帧的 OCR 结果规范化为结构化 TSV 输出。
+
+```bash
+uv run bili-assetizer ocr-normalize <asset_id>
+uv run bili-assetizer ocr-normalize <asset_id> --force
+```
+
+| 标志 | 说明 |
+|------|------|
+| `--force`, `-f` | 覆盖已有规范化 OCR 结果 |
+
+### `extract`
+
+运行完整的提取流水线（所有阶段按顺序执行）。
+
+```bash
+uv run bili-assetizer extract <asset_id>
+uv run bili-assetizer extract <asset_id> --download
+uv run bili-assetizer extract <asset_id> --local-file /path/to/video.mp4
+uv run bili-assetizer extract <asset_id> --until frames
+uv run bili-assetizer extract <asset_id> --force
+```
+
+| 标志 | 说明 |
+|------|------|
+| `--download` / `--no-download` | 源文件缺失时从 Bilibili 下载 |
+| `--local-file` | 本地视频文件路径 |
+| `--interval-sec` | 均匀采样的间隔秒数（默认：3.0） |
+| `--max-frames` | 最大提取帧数 |
+| `--top-buckets` | 选取的高分桶数量（默认：10） |
+| `--lang`, `-l` | Tesseract 语言代码（默认：`eng+chi_sim`） |
+| `--psm` | Tesseract 页面分割模式（默认：6） |
+| `--transcript-provider` | ASR 提供商（默认：`tencent`） |
+| `--transcript-format` | 字幕格式：0=分段，1=无标点词，2=带标点词 |
+| `--until` | 在此阶段后停止：`source`, `frames`, `timeline`, `select`, `ocr`, `ocr_normalize`, `transcript` |
+| `--force`, `-f` | 强制重新运行所有阶段 |
+
+### `index`
+
+为检索索引字幕和 OCR 证据。
+
+```bash
+uv run bili-assetizer index <asset_id>
+uv run bili-assetizer index <asset_id> --force
+```
+
+| 标志 | 说明 |
+|------|------|
+| `--force`, `-f` | 强制重新索引 |
+
+### `query`
+
+搜索资产的已索引证据。
+
+```bash
+uv run bili-assetizer query <asset_id> --q "搜索查询"
+uv run bili-assetizer query <asset_id> --q "搜索查询" --top-k 8
+```
+
+| 标志 | 说明 |
+|------|------|
+| `--q`, `-q` | 搜索查询（必需） |
+| `--top-k`, `-k` | 返回结果数量（默认：8） |
+
+### `evidence`
+
+为查询构建证据包。
+
+```bash
+uv run bili-assetizer evidence <asset_id> --q "搜索查询"
+uv run bili-assetizer evidence <asset_id> --q "搜索查询" --top-k 8
+uv run bili-assetizer evidence <asset_id> --q "搜索查询" --json
+```
+
+| 标志 | 说明 |
+|------|------|
+| `--q`, `-q` | 搜索查询（必需） |
+| `--top-k`, `-k` | 返回结果数量（默认：8） |
+| `--json` | 输出 JSON 证据包 |
+
+### `show`
+
+显示资产的构件路径和状态。
+
+```bash
+uv run bili-assetizer show <asset_id>
+uv run bili-assetizer show <asset_id> --json
+```
+
+| 标志 | 说明 |
+|------|------|
+| `--json` | 输出 JSON |
+
+### `clean`
+
+清理 data 目录中的构件（破坏性操作）。
+
+```bash
+uv run bili-assetizer clean --all --yes
+uv run bili-assetizer clean --asset <asset_id> --yes
+```
+
+| 标志 | 说明 |
+|------|------|
+| `--all` | 清理所有资产（无标志时的默认行为） |
+| `--asset`, `-a` | 要删除的特定资产 ID |
+| `--yes`, `-y` | 跳过确认提示 |
 
 ### `generate` (计划中)
 
@@ -202,13 +424,28 @@ data/assets/<asset_id>/
   source_api/
     view.json
     playurl.json
-  frames/                  # 提取的关键帧 (计划中)
-  transcript.jsonl         # 带时间戳的字幕片段 (计划中)
-  frames.jsonl             # 帧时间戳 + 描述/OCR (计划中)
-  memory/                  # 切片 + 嵌入元数据 (计划中)
+  source/
+    video.mp4
+    audio.mp3              # 为 ASR 提取的音频
+  frames_passA/            # 提取的关键帧
+  frames_passA.jsonl       # 关键帧元数据
+  timeline.json            # 信息密度桶
+  frame_scores.jsonl       # 每帧信息密度分数
+  frames_selected/         # 已选帧
+  selected.json            # 选择结果元数据
+  frames_ocr.jsonl         # 选定帧的 OCR 文本
+  frames_ocr_structured.jsonl # OCR 词/行结构与框信息
+  ocr_normalized.jsonl     # 规范化的 OCR 结果
+  transcript.jsonl         # 带时间戳的字幕片段
   outputs/
     illustrated_summary.md # (计划中)
     quiz.md                # (计划中)
+```
+
+全局数据库：
+
+```
+data/bili_assetizer.db     # 包含已索引证据的 SQLite 数据库
 ```
 
 ---
@@ -272,6 +509,13 @@ uv run pytest -q
 - 确保 `ffmpeg -version` 在您的 shell 中可用。
 - 如果已安装但找不到，请确保它在 PATH 中（然后重启 shell）。
 
+### 找不到 tesseract / 缺少语言数据
+
+- 确保 `tesseract --version` 在您的 shell 中可用。
+- 如果已安装但找不到，请确保它在 PATH 中（然后重启 shell）。
+- 若提示缺少语言（如 `chi_sim`），请安装对应 traineddata，并/或将 `TESSDATA_PREFIX` 设为包含 `tessdata` 的上级目录。
+- 安装地址：https://github.com/tesseract-ocr/tesseract
+
 ### `view` 正常但 `playurl` 失败
 
 常见原因：
@@ -291,11 +535,18 @@ curl -s "https://api.bilibili.com/x/web-interface/view?bvid=BV1vCzDBYEEa" | jq '
 
 ## 路线图
 
-* [x] 搭建腳手架：uv 项目 + CLI 入口 + 核心/适配器分离
+* [x] 搭建脚手架：uv 项目 + CLI 入口 + 核心/适配器分离
 * [x] 摄取 (Ingest)：URL → 资产文件夹 + 溯源信息 (`view`/`playurl`)
-* [ ] 提取 (Extract)：关键帧 + 音频 + 字幕片段
-* [ ] 视觉文本：OCR + 帧描述 + 信息密度时间轴
-* [ ] 记忆 (Memory)：切片 + 嵌入 + 多模态证据检索
+* [x] 提取 (Extract)：源文件落地 + 关键帧
+* [x] 时间轴 + 关键帧选择
+* [x] 视觉文本：OCR 结构化输出 + 规范化
+* [x] 字幕片段：通过腾讯云 ASR
+* [x] 索引 (Index)：切片 + 存储证据到 SQLite 供检索
+* [x] 查询 (Query)：关键词匹配搜索已索引证据
+* [x] 证据 (Evidence)：构建带引用的证据包
+* [x] 展示 (Show)：检查资产状态和构件
+* [ ] 帧描述（Frame captioning）
+* [ ] 记忆 (Memory)：嵌入 + 语义检索
 * [ ] 输出 (Outputs)：图文摘要 + 测验（带有引用）
 * [ ] 可选：FastAPI 端点 + 极简 Next.js UI
 

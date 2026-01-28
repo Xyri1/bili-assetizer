@@ -10,6 +10,9 @@ dependencies = [
     "uvicorn>=0.27.0",
     "python-dotenv>=1.0.0",
     "httpx>=0.27.0",
+    "pillow>=10.0.0",
+    "tencentcloud-sdk-python-asr",
+    "jieba>=0.42.1",
 ]
 
 [dependency-groups]

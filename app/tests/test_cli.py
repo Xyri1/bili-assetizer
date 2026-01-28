@@ -21,8 +21,8 @@ class TestDoctorCommand:
     @patch("bili_assetizer.cli.check_db")
     def test_all_checks_pass(self, mock_check_db, mock_run, mock_which, tmp_path, monkeypatch):
         """All checks passing shows success."""
-        # Mock ffmpeg found and working
-        mock_which.return_value = "/usr/bin/ffmpeg"
+        # Mock ffmpeg and tesseract found and working
+        mock_which.side_effect = lambda cmd: "/usr/bin/ffmpeg" if cmd == "ffmpeg" else "/usr/bin/tesseract"
         mock_run.return_value = MagicMock(returncode=0)
 
         # Mock database check
@@ -62,7 +62,7 @@ class TestDoctorCommand:
     @patch("bili_assetizer.cli.init_db")
     def test_initializes_db_if_needed(self, mock_init_db, mock_check_db, mock_run, mock_which, tmp_path, monkeypatch):
         """Initializes database if not present."""
-        mock_which.return_value = "/usr/bin/ffmpeg"
+        mock_which.side_effect = lambda cmd: "/usr/bin/ffmpeg" if cmd == "ffmpeg" else "/usr/bin/tesseract"
         mock_run.return_value = MagicMock(returncode=0)
         mock_check_db.return_value = False
 
@@ -75,6 +75,72 @@ class TestDoctorCommand:
 
         mock_init_db.assert_called_once()
         assert "initialized" in result.output.lower() or "OK" in result.output
+
+    @patch("bili_assetizer.cli.shutil.which")
+    @patch("bili_assetizer.cli.subprocess.run")
+    @patch("bili_assetizer.cli.check_db")
+    def test_tesseract_found(self, mock_check_db, mock_run, mock_which, tmp_path, monkeypatch):
+        """Tesseract found shows OK."""
+        # Mock both ffmpeg and tesseract found
+        mock_which.side_effect = lambda cmd: "/usr/bin/ffmpeg" if cmd == "ffmpeg" else "/usr/bin/tesseract"
+        mock_run.return_value = MagicMock(returncode=0)
+        mock_check_db.return_value = True
+
+        monkeypatch.setenv("DATA_DIR", str(tmp_path))
+        import bili_assetizer.core.config as config_module
+        config_module._settings = None
+
+        result = runner.invoke(app, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "tesseract" in result.output.lower()
+        assert "OK" in result.output
+
+    @patch("bili_assetizer.cli.shutil.which")
+    @patch("bili_assetizer.cli.subprocess.run")
+    @patch("bili_assetizer.cli.check_db")
+    def test_tesseract_not_found_fails(self, mock_check_db, mock_run, mock_which, tmp_path, monkeypatch):
+        """Missing tesseract fails the doctor check."""
+        # Mock ffmpeg found, tesseract not found
+        mock_which.side_effect = lambda cmd: "/usr/bin/ffmpeg" if cmd == "ffmpeg" else None
+        mock_run.return_value = MagicMock(returncode=0)
+        mock_check_db.return_value = True
+
+        monkeypatch.setenv("DATA_DIR", str(tmp_path))
+        import bili_assetizer.core.config as config_module
+        config_module._settings = None
+
+        # Mock Path.exists to return False for Windows paths
+        with patch("bili_assetizer.cli.Path.exists", return_value=False):
+            result = runner.invoke(app, ["doctor"])
+
+        # Should fail (exit code 1) since tesseract is required
+        assert result.exit_code == 1
+        assert "tesseract" in result.output.lower()
+        assert "NOT FOUND" in result.output
+        assert "failed" in result.output.lower()
+
+    @patch("bili_assetizer.cli.shutil.which")
+    @patch("bili_assetizer.cli.subprocess.run")
+    @patch("bili_assetizer.cli.check_db")
+    def test_tesseract_windows_fallback(self, mock_check_db, mock_run, mock_which, tmp_path, monkeypatch):
+        """On Windows, finds tesseract in common install location."""
+        # Mock ffmpeg found, tesseract not in PATH
+        mock_which.side_effect = lambda cmd: "/usr/bin/ffmpeg" if cmd == "ffmpeg" else None
+        mock_run.return_value = MagicMock(returncode=0)
+        mock_check_db.return_value = True
+
+        monkeypatch.setenv("DATA_DIR", str(tmp_path))
+        import bili_assetizer.core.config as config_module
+        config_module._settings = None
+
+        # Mock Windows platform and common path exists
+        with patch("bili_assetizer.cli.sys.platform", "win32"):
+            with patch("bili_assetizer.cli.Path.exists", return_value=True):
+                result = runner.invoke(app, ["doctor"])
+
+        assert result.exit_code == 0
+        assert "OK" in result.output
 
 
 class TestIngestCommand:
@@ -278,19 +344,32 @@ class TestUnimplementedCommands:
         assert result.exit_code == 1
         assert "not yet implemented" in result.output.lower()
 
-    def test_query_exits_with_error(self):
-        """Query command exits with code 1."""
-        result = runner.invoke(app, ["query", "--assets", "BV1test", "--q", "test query"])
+    def test_query_returns_error_without_index(self):
+        """Query command returns error when evidence schema is not initialized."""
+        # Query now requires asset_id as argument and -q for query
+        result = runner.invoke(app, ["query", "BV1test", "--q", "test query"])
 
+        # Should return error because evidence schema is not initialized
         assert result.exit_code == 1
-        assert "not yet implemented" in result.output.lower()
+        assert "error" in result.output.lower()
 
-    def test_show_exits_with_error(self):
-        """Show command exits with code 1."""
-        result = runner.invoke(app, ["show", "BV1test"])
 
-        assert result.exit_code == 1
-        assert "not yet implemented" in result.output.lower()
+class TestShowCommand:
+    """Tests for show command."""
+
+    def test_show_outputs_manifest(self, sample_asset, tmp_data_dir, monkeypatch):
+        """Show command prints asset details."""
+        asset_id, _asset_dir = sample_asset
+
+        monkeypatch.setenv("DATA_DIR", str(tmp_data_dir))
+        import bili_assetizer.core.config as config_module
+        config_module._settings = None
+
+        result = runner.invoke(app, ["show", asset_id])
+
+        assert result.exit_code == 0
+        assert asset_id in result.output
+        assert "manifest.json" in result.output
 
 
 class TestCliHelp:
@@ -307,6 +386,7 @@ class TestCliHelp:
         assert "generate" in result.output
         assert "query" in result.output
         assert "show" in result.output
+        assert "evidence" in result.output
 
     def test_ingest_help(self):
         """Ingest help shows options."""
