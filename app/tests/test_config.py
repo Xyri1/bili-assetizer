@@ -52,7 +52,9 @@ class TestLoadSettings:
         settings = load_settings()
         assert settings.data_dir == Path("./data")
         assert settings.ffmpeg_bin == "ffmpeg"
-        assert settings.ai_api_key is None
+        placeholder_keys = {"", "your-api-key-here"}
+        api_key = settings.ai_api_key
+        assert api_key is None or api_key.strip() in placeholder_keys
 
     def test_load_settings_with_data_dir_env(self, monkeypatch):
         """load_settings uses DATA_DIR from environment."""

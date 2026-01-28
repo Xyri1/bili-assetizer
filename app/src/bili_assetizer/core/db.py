@@ -8,6 +8,42 @@ from typing import Generator
 from .config import get_settings
 
 
+# Evidence schema for FTS5-based retrieval (separate from main SCHEMA for lazy init)
+EVIDENCE_SCHEMA = """
+-- Evidence table: indexed content for retrieval
+CREATE TABLE IF NOT EXISTS evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id TEXT NOT NULL,
+    source_type TEXT NOT NULL CHECK (source_type IN ('transcript', 'ocr')),
+    source_ref TEXT NOT NULL,
+    start_ms INTEGER NOT NULL,
+    end_ms INTEGER,
+    text TEXT NOT NULL,
+    UNIQUE(asset_id, source_type, source_ref)
+);
+
+-- FTS5 virtual table for full-text search
+CREATE VIRTUAL TABLE IF NOT EXISTS evidence_fts USING fts5(
+    text,
+    content='evidence',
+    content_rowid='id',
+    tokenize='unicode61 remove_diacritics 2'
+);
+
+-- Sync triggers to keep FTS in sync with evidence table
+CREATE TRIGGER IF NOT EXISTS evidence_ai AFTER INSERT ON evidence BEGIN
+    INSERT INTO evidence_fts(rowid, text) VALUES (new.id, new.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS evidence_ad AFTER DELETE ON evidence BEGIN
+    INSERT INTO evidence_fts(evidence_fts, rowid, text) VALUES('delete', old.id, old.text);
+END;
+
+-- Index for filtering by asset
+CREATE INDEX IF NOT EXISTS idx_evidence_asset ON evidence(asset_id);
+"""
+
+
 SCHEMA = """
 -- Assets table: top-level video assets
 CREATE TABLE IF NOT EXISTS assets (
@@ -150,6 +186,60 @@ def check_db(db_path: Path | None = None) -> bool:
         with get_connection(db_path) as conn:
             cursor = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='assets'"
+            )
+            return cursor.fetchone() is not None
+    except sqlite3.Error:
+        return False
+
+
+def init_evidence_schema(db_path: Path | None = None) -> list[str]:
+    """Initialize the evidence schema for FTS5-based retrieval.
+
+    Args:
+        db_path: Path to the database file. If None, uses settings.
+
+    Returns:
+        List of errors encountered during initialization.
+    """
+    errors: list[str] = []
+    if db_path is None:
+        db_path = get_db_path()
+
+    # Ensure parent directory exists
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.executescript(EVIDENCE_SCHEMA)
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        errors.append(f"Failed to initialize evidence schema: {e}")
+
+    return errors
+
+
+def check_evidence_schema(db_path: Path | None = None) -> bool:
+    """Check if the evidence schema is initialized.
+
+    Args:
+        db_path: Path to the database file. If None, uses settings.
+
+    Returns:
+        True if evidence schema exists, False otherwise.
+    """
+    if db_path is None:
+        db_path = get_db_path()
+
+    if not db_path.exists():
+        return False
+
+    try:
+        with get_connection(db_path) as conn:
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='evidence'"
             )
             return cursor.fetchone() is not None
     except sqlite3.Error:
