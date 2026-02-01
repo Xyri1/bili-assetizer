@@ -39,16 +39,7 @@ PIPELINE_STAGES = (
 )
 
 
-def _load_manifest(asset_dir: Path) -> Manifest | None:
-    manifest_path = asset_dir / "manifest.json"
-    if not manifest_path.exists():
-        return None
-    try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return Manifest.from_dict(data)
-    except (OSError, json.JSONDecodeError, KeyError, ValueError):
-        return None
+from .manifest_utils import load_manifest as _load_manifest
 
 
 def _has_cached_message(errors: list[str]) -> bool:
@@ -107,9 +98,10 @@ def _is_cached_stage(
     try:
         if stage == "source":
             source_stage = SourceStage.from_dict(manifest.stages["source"])
-            source_dir = asset_dir / "source"
+            # Check if actual video file exists, not just the source directory
+            video_path = asset_dir / (source_stage.video_path or "source/video.mp4")
             return (
-                source_stage.status == StageStatus.COMPLETED and source_dir.exists()
+                source_stage.status == StageStatus.COMPLETED and video_path.exists()
             )
         if stage == "frames":
             frames_stage = FramesStage.from_dict(manifest.stages["frames"])
@@ -201,9 +193,12 @@ def extract_pipeline(
     failed_at: str | None = None
     total = len(PIPELINE_STAGES)
 
+    # Use explicit download flag if set, otherwise False
+    # This makes pipeline behavior consistent with standalone extract-source:
+    # - With --download: downloads video from Bilibili
+    # - With --local-file: copies local file
+    # - Neither specified: sets status to MISSING (requires explicit action)
     download = options.download if options.download is not None else False
-    if options.download is None and options.local_file is None:
-        download = True
 
     for index, stage in enumerate(PIPELINE_STAGES, start=1):
         if on_stage_start:

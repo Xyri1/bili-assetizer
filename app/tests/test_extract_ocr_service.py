@@ -607,3 +607,116 @@ class TestExtractOcr:
         # Second frame should have error
         assert lines[1].get("error") == "OCR timeout"
         assert lines[1]["text"] == ""
+
+
+class TestPsmValidation:
+    """Tests for PSM parameter validation."""
+
+    def test_invalid_psm_rejected(self, tmp_assets_dir: Path):
+        """Should fail early with clear error when PSM is invalid."""
+        result = extract_ocr(
+            asset_id="any_asset",
+            assets_dir=tmp_assets_dir,
+            psm=14,  # Invalid: must be 0-13
+        )
+
+        assert result.status == StageStatus.FAILED
+        assert len(result.errors) == 1
+        assert "PSM must be 0-13" in result.errors[0]
+        assert "14" in result.errors[0]
+
+    def test_invalid_psm_negative(self, tmp_assets_dir: Path):
+        """Should fail early when PSM is negative."""
+        result = extract_ocr(
+            asset_id="any_asset",
+            assets_dir=tmp_assets_dir,
+            psm=-1,
+        )
+
+        assert result.status == StageStatus.FAILED
+        assert "PSM must be 0-13" in result.errors[0]
+
+    def test_valid_psm_accepted(self, sample_asset_with_select: Path):
+        """Should accept valid PSM values."""
+        asset_dir = sample_asset_with_select
+        asset_id = asset_dir.name
+        assets_dir = asset_dir.parent
+
+        with patch("bili_assetizer.core.extract_ocr_service._find_tesseract") as mock_find:
+            mock_find.return_value = ("/path/tesseract", [])
+
+            with patch("bili_assetizer.core.extract_ocr_service._validate_tesseract_language") as mock_validate:
+                mock_validate.return_value = []
+
+                with patch("bili_assetizer.core.extract_ocr_service._run_tesseract") as mock_run:
+                    mock_run.return_value = (TSV_SAMPLE, None)
+
+                    # Test valid PSM values
+                    for psm in [0, 6, 13]:
+                        result = extract_ocr(
+                            asset_id=asset_id,
+                            assets_dir=assets_dir,
+                            psm=psm,
+                            force=True,
+                        )
+                        assert result.status == StageStatus.COMPLETED, f"PSM {psm} should be valid"
+
+
+class TestOcrFailureThreshold:
+    """Tests for OCR failure threshold logic."""
+
+    def test_ocr_fails_on_high_error_rate(self, sample_asset_with_select: Path):
+        """Should fail when more than 50% of frames have errors."""
+        asset_dir = sample_asset_with_select
+        asset_id = asset_dir.name
+        assets_dir = asset_dir.parent
+
+        call_count = [0]
+
+        def mock_run_tesseract(*args, **kwargs):
+            """Mock that fails on all 3 frames."""
+            call_count[0] += 1
+            return "", "OCR error"
+
+        with patch("bili_assetizer.core.extract_ocr_service._find_tesseract") as mock_find:
+            mock_find.return_value = ("/path/tesseract", [])
+
+            with patch("bili_assetizer.core.extract_ocr_service._validate_tesseract_language") as mock_validate:
+                mock_validate.return_value = []
+
+                with patch("bili_assetizer.core.extract_ocr_service._run_tesseract", side_effect=mock_run_tesseract):
+                    result = extract_ocr(asset_id=asset_id, assets_dir=assets_dir)
+
+        # Should fail because 100% error rate > 50% threshold
+        assert result.status == StageStatus.FAILED
+        assert any("error rate exceeds" in e.lower() for e in result.errors)
+
+    def test_ocr_succeeds_with_acceptable_error_rate(self, sample_asset_with_select: Path):
+        """Should succeed when less than 50% of frames have errors."""
+        asset_dir = sample_asset_with_select
+        asset_id = asset_dir.name
+        assets_dir = asset_dir.parent
+
+        call_count = [0]
+
+        def mock_run_tesseract(*args, **kwargs):
+            """Mock that fails on 1 of 3 frames (33% error rate)."""
+            call_count[0] += 1
+            if call_count[0] == 2:
+                return "", "OCR error"
+            return TSV_SAMPLE, None
+
+        with patch("bili_assetizer.core.extract_ocr_service._find_tesseract") as mock_find:
+            mock_find.return_value = ("/path/tesseract", [])
+
+            with patch("bili_assetizer.core.extract_ocr_service._validate_tesseract_language") as mock_validate:
+                mock_validate.return_value = []
+
+                with patch("bili_assetizer.core.extract_ocr_service._run_tesseract", side_effect=mock_run_tesseract):
+                    result = extract_ocr(asset_id=asset_id, assets_dir=assets_dir)
+
+        # Should succeed because 33% error rate < 50% threshold
+        assert result.status == StageStatus.COMPLETED
+        assert result.frame_count == 3
+        # Should have recorded the error
+        assert len(result.errors) == 1

@@ -34,7 +34,7 @@ def test_cli_extract_source_with_local_file():
         mock_service.assert_called_once()
         args = mock_service.call_args
         assert args.kwargs["asset_id"] == "BV1test123"
-        assert str(args.kwargs["local_file"]) == "\\path\\to\\video.mp4"
+        assert args.kwargs["local_file"] == Path("/path/to/video.mp4")
         assert args.kwargs["force"] is False
 
 

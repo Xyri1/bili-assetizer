@@ -10,7 +10,6 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +19,10 @@ from tencentcloud.common.exception.tencent_cloud_sdk_exception import (
 )
 from tencentcloud.asr.v20190614 import asr_client, models
 
+from .manifest_utils import load_manifest, save_manifest
 from .models import (
     AssetStatus,
     ExtractTranscriptResult,
-    Manifest,
     SourceStage,
     StageStatus,
     TranscriptStage,
@@ -42,32 +41,6 @@ class TencentCredentials:
     secret_id: str
     secret_key: str
     region: str
-
-
-def _load_manifest(asset_dir: Path) -> Manifest | None:
-    """Load manifest from asset directory."""
-    manifest_path = asset_dir / "manifest.json"
-    if not manifest_path.exists():
-        return None
-    try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return Manifest.from_dict(data)
-    except (OSError, json.JSONDecodeError, KeyError, ValueError):
-        return None
-
-
-def _save_manifest(asset_dir: Path, manifest: Manifest) -> list[str]:
-    """Save manifest to asset directory."""
-    errors = []
-    manifest_path = asset_dir / "manifest.json"
-    try:
-        manifest.updated_at = datetime.now(timezone.utc).isoformat()
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(manifest.to_dict(), f, indent=2, ensure_ascii=False)
-    except OSError as e:
-        errors.append(f"Failed to save manifest: {e}")
-    return errors
 
 
 def _validate_source_video(
@@ -442,7 +415,7 @@ def extract_transcript(
             errors=[f"Asset not found: {asset_id}"],
         )
 
-    manifest = _load_manifest(asset_dir)
+    manifest = load_manifest(asset_dir)
     if not manifest:
         return ExtractTranscriptResult(
             asset_id=asset_id,
@@ -590,7 +563,7 @@ def extract_transcript(
     )
     manifest.stages["transcript"] = transcript_stage.to_dict()
 
-    save_errors = _save_manifest(asset_dir, manifest)
+    save_errors = save_manifest(asset_dir, manifest)
     if save_errors:
         return ExtractTranscriptResult(
             asset_id=asset_id,

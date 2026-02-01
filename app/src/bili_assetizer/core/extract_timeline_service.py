@@ -1,66 +1,18 @@
 """Service for extracting info-density timeline from video frames."""
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image, ImageFilter
 
+from .manifest_utils import load_manifest, save_manifest
 from .models import (
     AssetStatus,
     ExtractTimelineResult,
     FramesStage,
-    Manifest,
     StageStatus,
     TimelineStage,
 )
-
-
-def _load_manifest(asset_dir: Path) -> Manifest | None:
-    """Load manifest from asset directory.
-
-    Args:
-        asset_dir: Asset directory
-
-    Returns:
-        Manifest object or None if not found/invalid
-    """
-    manifest_path = asset_dir / "manifest.json"
-
-    if not manifest_path.exists():
-        return None
-
-    try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return Manifest.from_dict(data)
-    except (OSError, json.JSONDecodeError, KeyError, ValueError):
-        return None
-
-
-def _save_manifest(asset_dir: Path, manifest: Manifest) -> list[str]:
-    """Save manifest to asset directory.
-
-    Args:
-        asset_dir: Asset directory
-        manifest: Manifest to save
-
-    Returns:
-        List of error messages (empty if successful)
-    """
-    errors = []
-    manifest_path = asset_dir / "manifest.json"
-
-    try:
-        # Update timestamp
-        manifest.updated_at = datetime.now(timezone.utc).isoformat()
-
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(manifest.to_dict(), f, indent=2, ensure_ascii=False)
-    except OSError as e:
-        errors.append(f"Failed to save manifest: {e}")
-
-    return errors
 
 
 def _load_frames_metadata(asset_dir: Path, frames_file: str) -> tuple[list[dict], list[str]]:
@@ -211,14 +163,18 @@ def compute_content_concentration(image: Image.Image) -> float:
     # Calculate coefficient of variation (std/mean)
     mean_density = sum(region_densities) / len(region_densities)
 
-    if mean_density < 1.0:  # Very low overall edge density
-        return 0.5  # Neutral - could be blank frame
+    # Use more robust guard threshold to avoid extreme CV values
+    if mean_density < 0.01:  # Very low overall edge density
+        return 0.5  # Neutral - likely blank frame
 
     variance = sum((d - mean_density) ** 2 for d in region_densities) / len(region_densities)
     std_dev = variance ** 0.5
 
     # Coefficient of variation
     cv = std_dev / mean_density
+
+    # Clamp CV to reasonable range to avoid extreme scores
+    cv = min(cv, 2.0)
 
     # Normalize: CV typically ranges 0 to ~1.5 for content frames
     # CV > 0.5 indicates good concentration
@@ -524,7 +480,7 @@ def extract_timeline(
             errors=[f"Asset not found: {asset_id}"],
         )
 
-    manifest = _load_manifest(asset_dir)
+    manifest = load_manifest(asset_dir)
     if not manifest:
         return ExtractTimelineResult(
             asset_id=asset_id,
@@ -677,7 +633,7 @@ def extract_timeline(
     )
     manifest.stages["timeline"] = timeline_stage.to_dict()
 
-    save_errors = _save_manifest(asset_dir, manifest)
+    save_errors = save_manifest(asset_dir, manifest)
     if save_errors:
         return ExtractTimelineResult(
             asset_id=asset_id,

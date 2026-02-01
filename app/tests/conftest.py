@@ -1,12 +1,29 @@
 """Shared fixtures for bili-assetizer tests."""
 
 import json
-import pytest
 from pathlib import Path
+import pytest
 
 from bili_assetizer.core.db import init_db
 from bili_assetizer.core.models import AssetStatus, Manifest, ManifestPaths
 import subprocess
+
+
+@pytest.fixture(autouse=True)
+def _clear_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure environment proxies don't affect HTTP client tests."""
+    proxy_vars = (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+    )
+    for var in proxy_vars:
+        monkeypatch.delenv(var, raising=False)
 
 
 @pytest.fixture

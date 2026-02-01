@@ -12,7 +12,7 @@ from bili_assetizer.core.clean_service import (
     clean_asset,
     clean_all_assets,
 )
-from bili_assetizer.core.db import init_db, get_connection
+from bili_assetizer.core.db import init_db, init_evidence_schema, get_connection
 
 
 class TestListAssets:
@@ -200,6 +200,32 @@ class TestCleanAsset:
                     cursor = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE asset_id = ?", (asset_id,))
                 count = cursor.fetchone()[0]
                 assert count == 0, f"Records remain in {table}"
+
+    def test_deletes_evidence_records(self, sample_asset, tmp_assets_dir: Path, tmp_db_path: Path):
+        """Deletes evidence records used for search."""
+        asset_id, _asset_dir = sample_asset
+
+        init_db(tmp_db_path)
+        init_evidence_schema(tmp_db_path)
+
+        with get_connection(tmp_db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO evidence (asset_id, source_type, source_ref, start_ms, end_ms, text)
+                VALUES (?, 'transcript', ?, ?, ?, ?)
+                """,
+                (asset_id, "SEG_000001", 0, 1000, "hello world"),
+            )
+            conn.commit()
+
+        result = clean_asset(asset_id, tmp_assets_dir, tmp_db_path)
+        assert result.errors == []
+
+        with get_connection(tmp_db_path) as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM evidence WHERE asset_id = ?", (asset_id,)
+            )
+            assert cursor.fetchone()[0] == 0
 
 
 class TestCleanAllAssets:

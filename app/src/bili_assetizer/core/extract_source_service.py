@@ -3,12 +3,12 @@
 import json
 import shutil
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
 
-from .models import AssetStatus, ExtractSourceResult, Manifest, SourceStage, StageStatus
+from .manifest_utils import load_manifest, save_manifest
+from .models import AssetStatus, ExtractSourceResult, SourceStage, StageStatus
 
 
 # Download settings
@@ -106,53 +106,6 @@ def _verify_provenance(asset_dir: Path) -> list[str]:
     for file_path in required_files:
         if not file_path.exists():
             errors.append(f"Missing provenance file: {file_path.relative_to(asset_dir)}")
-
-    return errors
-
-
-def _load_manifest(asset_dir: Path) -> Manifest | None:
-    """Load manifest from asset directory.
-
-    Args:
-        asset_dir: Asset directory
-
-    Returns:
-        Manifest object or None if not found/invalid
-    """
-    manifest_path = asset_dir / "manifest.json"
-
-    if not manifest_path.exists():
-        return None
-
-    try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return Manifest.from_dict(data)
-    except (OSError, json.JSONDecodeError, KeyError, ValueError):
-        return None
-
-
-def _save_manifest(asset_dir: Path, manifest: Manifest) -> list[str]:
-    """Save manifest to asset directory.
-
-    Args:
-        asset_dir: Asset directory
-        manifest: Manifest to save
-
-    Returns:
-        List of error messages (empty if successful)
-    """
-    errors = []
-    manifest_path = asset_dir / "manifest.json"
-
-    try:
-        # Update timestamp
-        manifest.updated_at = datetime.now(timezone.utc).isoformat()
-
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(manifest.to_dict(), f, indent=2, ensure_ascii=False)
-    except OSError as e:
-        errors.append(f"Failed to save manifest: {e}")
 
     return errors
 
@@ -404,7 +357,7 @@ def extract_source(
             errors=[f"Asset not found: {asset_id}"],
         )
 
-    manifest = _load_manifest(asset_dir)
+    manifest = load_manifest(asset_dir)
     if not manifest:
         return ExtractSourceResult(
             asset_id=asset_id,
@@ -481,7 +434,7 @@ def extract_source(
         )
         manifest.stages["source"] = source_stage.to_dict()
 
-        save_errors = _save_manifest(asset_dir, manifest)
+        save_errors = save_manifest(asset_dir, manifest)
         if save_errors:
             return ExtractSourceResult(
                 asset_id=asset_id,
@@ -512,7 +465,7 @@ def extract_source(
         )
         manifest.stages["source"] = source_stage.to_dict()
 
-        save_errors = _save_manifest(asset_dir, manifest)
+        save_errors = save_manifest(asset_dir, manifest)
         if save_errors:
             return ExtractSourceResult(
                 asset_id=asset_id,
@@ -545,7 +498,7 @@ def extract_source(
         )
         manifest.stages["source"] = source_stage.to_dict()
 
-        save_errors = _save_manifest(asset_dir, manifest)
+        save_errors = save_manifest(asset_dir, manifest)
         if save_errors:
             return ExtractSourceResult(
                 asset_id=asset_id,

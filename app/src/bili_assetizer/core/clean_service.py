@@ -4,7 +4,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .db import get_connection
+from .db import get_connection, check_evidence_schema
 
 
 @dataclass
@@ -79,6 +79,10 @@ def _delete_asset_from_db(asset_id: str, db_path: Path) -> list[str]:
 
     try:
         with get_connection(db_path) as conn:
+            # 0. Delete evidence rows if evidence schema exists
+            if check_evidence_schema(db_path):
+                conn.execute("DELETE FROM evidence WHERE asset_id = ?", (asset_id,))
+
             # Delete in order due to foreign key constraints
             # Note: SQLite doesn't enforce FKs by default, but we follow the schema order
 

@@ -3,47 +3,16 @@
 import json
 import re
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 
+from .manifest_utils import load_manifest, save_manifest
 from .models import (
     AssetStatus,
     ExtractOcrNormalizeResult,
-    Manifest,
     OcrNormalizeStage,
     OcrStage,
     StageStatus,
 )
-
-
-def _load_manifest(asset_dir: Path) -> Manifest | None:
-    """Load manifest from asset directory."""
-    manifest_path = asset_dir / "manifest.json"
-
-    if not manifest_path.exists():
-        return None
-
-    try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return Manifest.from_dict(data)
-    except (OSError, json.JSONDecodeError, KeyError, ValueError):
-        return None
-
-
-def _save_manifest(asset_dir: Path, manifest: Manifest) -> list[str]:
-    """Save manifest to asset directory."""
-    errors = []
-    manifest_path = asset_dir / "manifest.json"
-
-    try:
-        manifest.updated_at = datetime.now(timezone.utc).isoformat()
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(manifest.to_dict(), f, indent=2, ensure_ascii=False)
-    except OSError as e:
-        errors.append(f"Failed to save manifest: {e}")
-
-    return errors
 
 
 def _load_selected_json(asset_dir: Path) -> tuple[dict | None, list[str]]:
@@ -358,7 +327,7 @@ def ocr_normalize(
             errors=[f"Asset not found: {asset_id}"],
         )
 
-    manifest = _load_manifest(asset_dir)
+    manifest = load_manifest(asset_dir)
     if not manifest:
         return ExtractOcrNormalizeResult(
             asset_id=asset_id,
