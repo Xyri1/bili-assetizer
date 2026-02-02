@@ -2,65 +2,18 @@
 
 import hashlib
 import json
+import re
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 
+from .manifest_utils import load_manifest, save_manifest
 from .models import (
     AssetStatus,
     ExtractFramesResult,
     FramesStage,
-    Manifest,
     SourceStage,
     StageStatus,
 )
-
-
-def _load_manifest(asset_dir: Path) -> Manifest | None:
-    """Load manifest from asset directory.
-
-    Args:
-        asset_dir: Asset directory
-
-    Returns:
-        Manifest object or None if not found/invalid
-    """
-    manifest_path = asset_dir / "manifest.json"
-
-    if not manifest_path.exists():
-        return None
-
-    try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return Manifest.from_dict(data)
-    except (OSError, json.JSONDecodeError, KeyError, ValueError):
-        return None
-
-
-def _save_manifest(asset_dir: Path, manifest: Manifest) -> list[str]:
-    """Save manifest to asset directory.
-
-    Args:
-        asset_dir: Asset directory
-        manifest: Manifest to save
-
-    Returns:
-        List of error messages (empty if successful)
-    """
-    errors = []
-    manifest_path = asset_dir / "manifest.json"
-
-    try:
-        # Update timestamp
-        manifest.updated_at = datetime.now(timezone.utc).isoformat()
-
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(manifest.to_dict(), f, indent=2, ensure_ascii=False)
-    except OSError as e:
-        errors.append(f"Failed to save manifest: {e}")
-
-    return errors
 
 
 def _validate_source_video(asset_dir: Path, manifest: Manifest) -> tuple[Path | None, list[str]]:
@@ -193,12 +146,16 @@ def _extract_frames_ffmpeg(
         interval_sec = params.get("interval_sec", 3.0)
         scene_thresh = params.get("scene_thresh")
 
-        # Use uniform sampling (scene detection is optional)
-        filter_parts = [f"fps=1/{interval_sec}"]
+        # Build filter based on extraction mode
+        filter_parts = []
 
-        # Add scene detection if requested
         if scene_thresh is not None:
+            # Scene detection mode: detect scenes on full framerate first
+            # This ensures we don't miss scene changes between sampled frames
             filter_parts.append(f"select='gt(scene,{scene_thresh})'")
+        else:
+            # Uniform sampling mode
+            filter_parts.append(f"fps=1/{interval_sec}")
 
         # Add resize to max width 768px
         filter_parts.append("scale='min(768,iw):-2'")
@@ -261,20 +218,48 @@ def _compute_frame_hash(image_path: Path) -> str:
     return hasher.hexdigest()
 
 
-def _deduplicate_frames(frames_dir: Path) -> list[dict]:
+def _extract_frame_number(frame_path: Path) -> int | None:
+    """Extract the original frame number from filename.
+
+    Filenames are expected in format: frame_NNNNNN.png
+
+    Args:
+        frame_path: Path to frame file
+
+    Returns:
+        Frame number (1-indexed) or None if cannot parse
+    """
+    match = re.match(r"frame_(\d+)\.png$", frame_path.name)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _deduplicate_frames(
+    frames_dir: Path,
+    interval_sec: float,
+    scene_thresh: float | None = None,
+) -> tuple[list[dict], list[str]]:
     """Deduplicate frames by MD5 hash, delete duplicates from disk.
+
+    Computes ts_ms from the original filename (frame_000003.png -> frame 3)
+    to ensure correct timestamps even after deduplication.
 
     Args:
         frames_dir: Directory containing frame images
+        interval_sec: Seconds between frames (for uniform sampling)
+        scene_thresh: Scene detection threshold (None means uniform sampling)
 
     Returns:
-        List of frame metadata dicts (includes both kept and deleted duplicates)
+        Tuple of (frame metadata list, deletion errors)
     """
+    deletion_errors: list[str] = []
+
     # Collect all frame files
     frame_files = sorted(frames_dir.glob("frame_*.png"))
 
     if not frame_files:
-        return []
+        return [], []
 
     # Track seen hashes and frame metadata
     seen_hashes: dict[str, str] = {}  # hash -> frame_id
@@ -282,6 +267,19 @@ def _deduplicate_frames(frames_dir: Path) -> list[dict]:
 
     for idx, frame_path in enumerate(frame_files, start=1):
         frame_id = f"KF_{idx:06d}"
+
+        # Extract original frame number from filename for timestamp calculation
+        original_frame_num = _extract_frame_number(frame_path)
+
+        # Compute timestamp from original frame number
+        # For uniform sampling: ts_ms = (frame_num - 1) * interval_sec * 1000
+        # For scene detection: ts_ms is unknown (set to None)
+        if scene_thresh is not None:
+            ts_ms = None  # Scene detection doesn't have predictable timestamps
+        elif original_frame_num is not None:
+            ts_ms = int((original_frame_num - 1) * interval_sec * 1000)
+        else:
+            ts_ms = None
 
         # Compute hash
         frame_hash = _compute_frame_hash(frame_path)
@@ -292,10 +290,10 @@ def _deduplicate_frames(frames_dir: Path) -> list[dict]:
             original_frame_id = seen_hashes[frame_hash]
             frames.append({
                 "frame_id": frame_id,
-                "ts_ms": None,  # Will be filled later if needed
+                "ts_ms": ts_ms,
                 "path": None,  # File was deleted
                 "hash": frame_hash,
-                "source": "uniform",
+                "source": "scene" if scene_thresh is not None else "uniform",
                 "is_duplicate": True,
                 "duplicate_of": original_frame_id,
             })
@@ -303,8 +301,10 @@ def _deduplicate_frames(frames_dir: Path) -> list[dict]:
             # Delete duplicate file
             try:
                 frame_path.unlink()
-            except OSError:
-                pass  # Best effort deletion
+            except OSError as e:
+                deletion_errors.append(
+                    f"Failed to delete duplicate {frame_path.name}: {e}"
+                )
 
         else:
             # Unique frame - keep it
@@ -313,15 +313,15 @@ def _deduplicate_frames(frames_dir: Path) -> list[dict]:
 
             frames.append({
                 "frame_id": frame_id,
-                "ts_ms": None,  # Will be filled later if needed
+                "ts_ms": ts_ms,
                 "path": relative_path,
                 "hash": frame_hash,
-                "source": "uniform",
+                "source": "scene" if scene_thresh is not None else "uniform",
                 "is_duplicate": False,
                 "duplicate_of": None,
             })
 
-    return frames
+    return frames, deletion_errors
 
 
 def _write_frames_jsonl(frames: list[dict], output_path: Path) -> list[str]:
@@ -379,7 +379,7 @@ def extract_frames(
             errors=[f"Asset not found: {asset_id}"],
         )
 
-    manifest = _load_manifest(asset_dir)
+    manifest = load_manifest(asset_dir)
     if not manifest:
         return ExtractFramesResult(
             asset_id=asset_id,
@@ -466,7 +466,13 @@ def extract_frames(
         )
 
     # 8. Deduplicate frames
-    frames = _deduplicate_frames(frames_dir)
+    frames, deletion_errors = _deduplicate_frames(
+        frames_dir=frames_dir,
+        interval_sec=interval_sec,
+        scene_thresh=scene_thresh,
+    )
+    # Log deletion errors but don't fail the operation
+    errors.extend(deletion_errors)
 
     if not frames:
         return ExtractFramesResult(
@@ -478,8 +484,14 @@ def extract_frames(
     # 9. Apply max_frames cap (count only unique frames)
     unique_frames = [f for f in frames if not f["is_duplicate"]]
     if max_frames and len(unique_frames) > max_frames:
+        # Sort unique frames by timestamp to keep earliest frames
+        # Use ts_ms if available, otherwise maintain frame_id order
+        unique_frames_sorted = sorted(
+            unique_frames,
+            key=lambda f: (f["ts_ms"] is None, f["ts_ms"] or 0, f["frame_id"]),
+        )
         # Keep first max_frames unique frames, delete the rest
-        kept_frame_ids = {f["frame_id"] for f in unique_frames[:max_frames]}
+        kept_frame_ids = {f["frame_id"] for f in unique_frames_sorted[:max_frames]}
 
         # Filter frames list and delete excess files
         filtered_frames = []
@@ -524,7 +536,7 @@ def extract_frames(
     )
     manifest.stages["frames"] = frames_stage.to_dict()
 
-    save_errors = _save_manifest(asset_dir, manifest)
+    save_errors = save_manifest(asset_dir, manifest)
     if save_errors:
         return ExtractFramesResult(
             asset_id=asset_id,

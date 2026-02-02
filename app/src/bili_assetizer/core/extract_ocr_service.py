@@ -5,63 +5,16 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
+from .manifest_utils import load_manifest, save_manifest
 from .models import (
     AssetStatus,
     ExtractOcrResult,
-    Manifest,
     OcrStage,
     SelectStage,
     StageStatus,
 )
-
-
-def _load_manifest(asset_dir: Path) -> Manifest | None:
-    """Load manifest from asset directory.
-
-    Args:
-        asset_dir: Asset directory
-
-    Returns:
-        Manifest object or None if not found/invalid
-    """
-    manifest_path = asset_dir / "manifest.json"
-
-    if not manifest_path.exists():
-        return None
-
-    try:
-        with open(manifest_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return Manifest.from_dict(data)
-    except (OSError, json.JSONDecodeError, KeyError, ValueError):
-        return None
-
-
-def _save_manifest(asset_dir: Path, manifest: Manifest) -> list[str]:
-    """Save manifest to asset directory.
-
-    Args:
-        asset_dir: Asset directory
-        manifest: Manifest to save
-
-    Returns:
-        List of error messages (empty if successful)
-    """
-    errors = []
-    manifest_path = asset_dir / "manifest.json"
-
-    try:
-        manifest.updated_at = datetime.now(timezone.utc).isoformat()
-
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(manifest.to_dict(), f, indent=2, ensure_ascii=False)
-    except OSError as e:
-        errors.append(f"Failed to save manifest: {e}")
-
-    return errors
 
 
 def _find_tesseract(tesseract_cmd: str | None) -> tuple[str | None, list[str]]:
@@ -515,7 +468,15 @@ def extract_ocr(
     """
     asset_dir = assets_dir / asset_id
 
-    # 1. Validate asset exists and load manifest
+    # 1. Validate PSM parameter
+    if not (0 <= psm <= 13):
+        return ExtractOcrResult(
+            asset_id=asset_id,
+            status=StageStatus.FAILED,
+            errors=[f"PSM must be 0-13, got: {psm}"],
+        )
+
+    # 2. Validate asset exists and load manifest
     if not asset_dir.exists():
         return ExtractOcrResult(
             asset_id=asset_id,
@@ -523,7 +484,7 @@ def extract_ocr(
             errors=[f"Asset not found: {asset_id}"],
         )
 
-    manifest = _load_manifest(asset_dir)
+    manifest = load_manifest(asset_dir)
     if not manifest:
         return ExtractOcrResult(
             asset_id=asset_id,
@@ -713,7 +674,26 @@ def extract_ocr(
             structured_result["error"] = error
         structured_results.append(structured_result)
 
-    # 9. Write frames_ocr.jsonl
+    # 9. Check failure threshold
+    # Count actual errors (not just "no text found")
+    # Error results have an "error" key in the ocr_result
+    error_count = sum(1 for r in ocr_results if r.get("error"))
+    total_frames = len(frames)
+
+    # If more than 50% of frames have actual errors, mark as FAILED
+    error_rate_threshold = 0.5
+    if total_frames > 0 and error_count / total_frames > error_rate_threshold:
+        return ExtractOcrResult(
+            asset_id=asset_id,
+            status=StageStatus.FAILED,
+            errors=[
+                f"OCR failed on {error_count}/{total_frames} frames "
+                f"({error_count / total_frames * 100:.0f}% error rate exceeds "
+                f"{error_rate_threshold * 100:.0f}% threshold)"
+            ] + ocr_errors,
+        )
+
+    # 10. Write frames_ocr.jsonl
     ocr_file = "frames_ocr.jsonl"
     write_errors = _write_ocr_jsonl(asset_dir / ocr_file, ocr_results)
     if write_errors:
@@ -723,7 +703,7 @@ def extract_ocr(
             errors=write_errors,
         )
 
-    # 10. Write frames_ocr_structured.jsonl
+    # 11. Write frames_ocr_structured.jsonl
     structured_file = "frames_ocr_structured.jsonl"
     write_errors = _write_structured_jsonl(
         asset_dir / structured_file, structured_results
@@ -735,7 +715,7 @@ def extract_ocr(
             errors=write_errors,
         )
 
-    # 11. Update manifest with stages.ocr
+    # 12. Update manifest with stages.ocr
     ocr_stage = OcrStage(
         status=StageStatus.COMPLETED,
         frame_count=len(ocr_results),
@@ -746,7 +726,7 @@ def extract_ocr(
     )
     manifest.stages["ocr"] = ocr_stage.to_dict()
 
-    save_errors = _save_manifest(asset_dir, manifest)
+    save_errors = save_manifest(asset_dir, manifest)
     if save_errors:
         return ExtractOcrResult(
             asset_id=asset_id,
@@ -754,7 +734,7 @@ def extract_ocr(
             errors=save_errors,
         )
 
-    # 12. Return success result
+    # 13. Return success result
     return ExtractOcrResult(
         asset_id=asset_id,
         status=StageStatus.COMPLETED,

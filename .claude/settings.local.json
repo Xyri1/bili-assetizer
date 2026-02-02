@@ -3,7 +3,9 @@
     "allow": [
       "Bash(uv run python:*)",
       "mcp__context7__resolve-library-id",
-      "Bash(uv run pytest:*)"
+      "Bash(uv run pytest:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)"
     ]
   }
 }

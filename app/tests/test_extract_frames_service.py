@@ -84,19 +84,22 @@ def test_extract_frames_uniform_success(
     mock_duration.return_value = (10.0, [])  # 10 second video
     mock_ffmpeg.return_value = []  # No errors
 
-    # Mock 5 unique frames extracted
-    mock_dedupe.return_value = [
-        {
-            "frame_id": f"KF_{i:06d}",
-            "ts_ms": None,
-            "path": f"frames_passA/frame_{i:06d}.png",
-            "hash": f"hash_{i}",
-            "source": "uniform",
-            "is_duplicate": False,
-            "duplicate_of": None,
-        }
-        for i in range(1, 6)
-    ]
+    # Mock 5 unique frames extracted (returns tuple: frames, errors)
+    mock_dedupe.return_value = (
+        [
+            {
+                "frame_id": f"KF_{i:06d}",
+                "ts_ms": None,
+                "path": f"frames_passA/frame_{i:06d}.png",
+                "hash": f"hash_{i}",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            }
+            for i in range(1, 6)
+        ],
+        [],  # No deletion errors
+    )
 
     result = extract_frames(
         asset_id=asset_id,
@@ -138,19 +141,22 @@ def test_extract_frames_with_max_frames(
     mock_duration.return_value = (20.0, [])
     mock_ffmpeg.return_value = []
 
-    # Mock 10 unique frames extracted
-    mock_dedupe.return_value = [
-        {
-            "frame_id": f"KF_{i:06d}",
-            "ts_ms": None,
-            "path": f"frames_passA/frame_{i:06d}.png",
-            "hash": f"hash_{i}",
-            "source": "uniform",
-            "is_duplicate": False,
-            "duplicate_of": None,
-        }
-        for i in range(1, 11)
-    ]
+    # Mock 10 unique frames extracted (returns tuple: frames, errors)
+    mock_dedupe.return_value = (
+        [
+            {
+                "frame_id": f"KF_{i:06d}",
+                "ts_ms": None,
+                "path": f"frames_passA/frame_{i:06d}.png",
+                "hash": f"hash_{i}",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            }
+            for i in range(1, 11)
+        ],
+        [],  # No deletion errors
+    )
 
     result = extract_frames(
         asset_id=asset_id,
@@ -178,17 +184,20 @@ def test_extract_frames_idempotent(
     # Mock successful operations
     mock_duration.return_value = (10.0, [])
     mock_ffmpeg.return_value = []
-    mock_dedupe.return_value = [
-        {
-            "frame_id": "KF_000001",
-            "ts_ms": None,
-            "path": "frames_passA/frame_000001.png",
-            "hash": "hash_1",
-            "source": "uniform",
-            "is_duplicate": False,
-            "duplicate_of": None,
-        }
-    ]
+    mock_dedupe.return_value = (
+        [
+            {
+                "frame_id": "KF_000001",
+                "ts_ms": None,
+                "path": "frames_passA/frame_000001.png",
+                "hash": "hash_1",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            }
+        ],
+        [],
+    )
 
     # First extraction
     result1 = extract_frames(
@@ -237,17 +246,20 @@ def test_extract_frames_force_overwrites(
     # Mock successful operations
     mock_duration.return_value = (10.0, [])
     mock_ffmpeg.return_value = []
-    mock_dedupe.return_value = [
-        {
-            "frame_id": "KF_000001",
-            "ts_ms": None,
-            "path": "frames_passA/frame_000001.png",
-            "hash": "hash_1",
-            "source": "uniform",
-            "is_duplicate": False,
-            "duplicate_of": None,
-        }
-    ]
+    mock_dedupe.return_value = (
+        [
+            {
+                "frame_id": "KF_000001",
+                "ts_ms": None,
+                "path": "frames_passA/frame_000001.png",
+                "hash": "hash_1",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            }
+        ],
+        [],
+    )
 
     # First extraction
     result1 = extract_frames(
@@ -264,17 +276,20 @@ def test_extract_frames_force_overwrites(
 
     mock_duration.return_value = (10.0, [])
     mock_ffmpeg.return_value = []
-    mock_dedupe.return_value = [
-        {
-            "frame_id": "KF_000001",
-            "ts_ms": None,
-            "path": "frames_passA/frame_000001.png",
-            "hash": "hash_1",
-            "source": "uniform",
-            "is_duplicate": False,
-            "duplicate_of": None,
-        }
-    ]
+    mock_dedupe.return_value = (
+        [
+            {
+                "frame_id": "KF_000001",
+                "ts_ms": None,
+                "path": "frames_passA/frame_000001.png",
+                "hash": "hash_1",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            }
+        ],
+        [],
+    )
 
     result2 = extract_frames(
         asset_id=asset_id,
@@ -307,17 +322,20 @@ def test_extract_frames_params_changed(
     # Mock successful operations
     mock_duration.return_value = (10.0, [])
     mock_ffmpeg.return_value = []
-    mock_dedupe.return_value = [
-        {
-            "frame_id": "KF_000001",
-            "ts_ms": None,
-            "path": "frames_passA/frame_000001.png",
-            "hash": "hash_1",
-            "source": "uniform",
-            "is_duplicate": False,
-            "duplicate_of": None,
-        }
-    ]
+    mock_dedupe.return_value = (
+        [
+            {
+                "frame_id": "KF_000001",
+                "ts_ms": None,
+                "path": "frames_passA/frame_000001.png",
+                "hash": "hash_1",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            }
+        ],
+        [],
+    )
 
     # First extraction with interval_sec=3.0
     result1 = extract_frames(
@@ -335,17 +353,20 @@ def test_extract_frames_params_changed(
 
     mock_duration.return_value = (10.0, [])
     mock_ffmpeg.return_value = []
-    mock_dedupe.return_value = [
-        {
-            "frame_id": "KF_000001",
-            "ts_ms": None,
-            "path": "frames_passA/frame_000001.png",
-            "hash": "hash_1",
-            "source": "uniform",
-            "is_duplicate": False,
-            "duplicate_of": None,
-        }
-    ]
+    mock_dedupe.return_value = (
+        [
+            {
+                "frame_id": "KF_000001",
+                "ts_ms": None,
+                "path": "frames_passA/frame_000001.png",
+                "hash": "hash_1",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            }
+        ],
+        [],
+    )
 
     result2 = extract_frames(
         asset_id=asset_id,
@@ -379,35 +400,38 @@ def test_extract_frames_deduplication(
     mock_ffmpeg.return_value = []
 
     # Mock 3 frames: 2 unique, 1 duplicate
-    mock_dedupe.return_value = [
-        {
-            "frame_id": "KF_000001",
-            "ts_ms": None,
-            "path": "frames_passA/frame_000001.png",
-            "hash": "hash_1",
-            "source": "uniform",
-            "is_duplicate": False,
-            "duplicate_of": None,
-        },
-        {
-            "frame_id": "KF_000002",
-            "ts_ms": None,
-            "path": None,  # Deleted
-            "hash": "hash_1",  # Same hash as frame 1
-            "source": "uniform",
-            "is_duplicate": True,
-            "duplicate_of": "KF_000001",
-        },
-        {
-            "frame_id": "KF_000003",
-            "ts_ms": None,
-            "path": "frames_passA/frame_000003.png",
-            "hash": "hash_2",
-            "source": "uniform",
-            "is_duplicate": False,
-            "duplicate_of": None,
-        },
-    ]
+    mock_dedupe.return_value = (
+        [
+            {
+                "frame_id": "KF_000001",
+                "ts_ms": None,
+                "path": "frames_passA/frame_000001.png",
+                "hash": "hash_1",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            },
+            {
+                "frame_id": "KF_000002",
+                "ts_ms": None,
+                "path": None,  # Deleted
+                "hash": "hash_1",  # Same hash as frame 1
+                "source": "uniform",
+                "is_duplicate": True,
+                "duplicate_of": "KF_000001",
+            },
+            {
+                "frame_id": "KF_000003",
+                "ts_ms": None,
+                "path": "frames_passA/frame_000003.png",
+                "hash": "hash_2",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            },
+        ],
+        [],
+    )
 
     result = extract_frames(
         asset_id=asset_id,
@@ -490,7 +514,7 @@ def test_extract_frames_no_frames_found(
     # Mock successful operations but no frames
     mock_duration.return_value = (10.0, [])
     mock_ffmpeg.return_value = []
-    mock_dedupe.return_value = []  # No frames
+    mock_dedupe.return_value = ([], [])  # No frames, no errors
 
     result = extract_frames(
         asset_id=asset_id,
@@ -499,3 +523,177 @@ def test_extract_frames_no_frames_found(
 
     assert result.status == StageStatus.FAILED
     assert any("No frames found" in err for err in result.errors)
+
+
+@patch("bili_assetizer.core.extract_frames_service._get_video_duration")
+@patch("bili_assetizer.core.extract_frames_service._extract_frames_ffmpeg")
+@patch("bili_assetizer.core.extract_frames_service._deduplicate_frames")
+def test_deduplicate_preserves_timestamps(
+    mock_dedupe: MagicMock,
+    mock_ffmpeg: MagicMock,
+    mock_duration: MagicMock,
+    sample_asset_with_source: Path,
+):
+    """Test that timestamps are computed from original filename, not reassigned frame_id.
+
+    Bug: If frame_000003.png (at 6.0s) becomes KF_000002 after dedup,
+    its ts_ms should still be 6000, not 3000.
+    """
+    asset_dir = sample_asset_with_source
+    asset_id = asset_dir.name
+
+    # Mock successful operations
+    mock_duration.return_value = (12.0, [])
+    mock_ffmpeg.return_value = []
+
+    # Simulate: frame_000001.png (0s), frame_000002.png (3s, duplicate of 1),
+    # frame_000003.png (6s, unique), frame_000004.png (9s, unique)
+    # After dedup: KF_000001 (ts=0), KF_000002 (ts=3000, dup), KF_000003 (ts=6000), KF_000004 (ts=9000)
+    mock_dedupe.return_value = (
+        [
+            {
+                "frame_id": "KF_000001",
+                "ts_ms": 0,  # frame_000001.png at interval 3.0s
+                "path": "frames_passA/frame_000001.png",
+                "hash": "hash_1",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            },
+            {
+                "frame_id": "KF_000002",
+                "ts_ms": 3000,  # frame_000002.png - duplicate but still has correct ts
+                "path": None,
+                "hash": "hash_1",  # Same hash as frame 1
+                "source": "uniform",
+                "is_duplicate": True,
+                "duplicate_of": "KF_000001",
+            },
+            {
+                "frame_id": "KF_000003",
+                "ts_ms": 6000,  # frame_000003.png - should be 6000, not 3000
+                "path": "frames_passA/frame_000003.png",
+                "hash": "hash_2",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            },
+            {
+                "frame_id": "KF_000004",
+                "ts_ms": 9000,  # frame_000004.png
+                "path": "frames_passA/frame_000004.png",
+                "hash": "hash_3",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            },
+        ],
+        [],  # No deletion errors
+    )
+
+    result = extract_frames(
+        asset_id=asset_id,
+        assets_dir=asset_dir.parent,
+        interval_sec=3.0,
+    )
+
+    assert result.status == StageStatus.COMPLETED
+    assert result.frame_count == 3  # 3 unique frames
+
+    # Verify JSONL has correct timestamps
+    jsonl_path = asset_dir / "frames_passA.jsonl"
+    assert jsonl_path.exists()
+
+    with open(jsonl_path, "r") as f:
+        lines = [json.loads(line) for line in f]
+
+    # Check KF_000003 has ts_ms=6000, not ts_ms=3000
+    kf_003 = next(f for f in lines if f["frame_id"] == "KF_000003")
+    assert kf_003["ts_ms"] == 6000, f"Expected 6000, got {kf_003['ts_ms']}"
+
+
+@patch("bili_assetizer.core.extract_frames_service._get_video_duration")
+@patch("bili_assetizer.core.extract_frames_service._extract_frames_ffmpeg")
+@patch("bili_assetizer.core.extract_frames_service._deduplicate_frames")
+def test_max_frames_keeps_earliest_by_timestamp(
+    mock_dedupe: MagicMock,
+    mock_ffmpeg: MagicMock,
+    mock_duration: MagicMock,
+    sample_asset_with_source: Path,
+):
+    """Test that max_frames keeps earliest frames by timestamp, not by frame_id."""
+    asset_dir = sample_asset_with_source
+    asset_id = asset_dir.name
+
+    mock_duration.return_value = (20.0, [])
+    mock_ffmpeg.return_value = []
+
+    # Create 5 frames with timestamps
+    mock_dedupe.return_value = (
+        [
+            {
+                "frame_id": "KF_000001",
+                "ts_ms": 0,
+                "path": "frames_passA/frame_000001.png",
+                "hash": "h1",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            },
+            {
+                "frame_id": "KF_000002",
+                "ts_ms": 3000,
+                "path": "frames_passA/frame_000002.png",
+                "hash": "h2",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            },
+            {
+                "frame_id": "KF_000003",
+                "ts_ms": 6000,
+                "path": "frames_passA/frame_000003.png",
+                "hash": "h3",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            },
+            {
+                "frame_id": "KF_000004",
+                "ts_ms": 9000,
+                "path": "frames_passA/frame_000004.png",
+                "hash": "h4",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            },
+            {
+                "frame_id": "KF_000005",
+                "ts_ms": 12000,
+                "path": "frames_passA/frame_000005.png",
+                "hash": "h5",
+                "source": "uniform",
+                "is_duplicate": False,
+                "duplicate_of": None,
+            },
+        ],
+        [],
+    )
+
+    result = extract_frames(
+        asset_id=asset_id,
+        assets_dir=asset_dir.parent,
+        interval_sec=3.0,
+        max_frames=3,
+    )
+
+    assert result.status == StageStatus.COMPLETED
+    assert result.frame_count == 3
+
+    # Verify the kept frames are the earliest by timestamp
+    jsonl_path = asset_dir / "frames_passA.jsonl"
+    with open(jsonl_path, "r") as f:
+        lines = [json.loads(line) for line in f]
+
+    kept_frame_ids = {f["frame_id"] for f in lines if not f["is_duplicate"]}
+    assert kept_frame_ids == {"KF_000001", "KF_000002", "KF_000003"}
